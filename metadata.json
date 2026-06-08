@@ -1,0 +1,6 @@
+{
+  "name": "Story Market",
+  "description": "AI-driven interactive story market where users vote on plot progression.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@400;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+
+  --color-cream: #FDFBF7;
+  --color-sand: #F5EFE7;
+  --color-charcoal: #2D2D2D;
+  --color-sage: #D0E2D4;
+  --color-dusty-rose: #EEDAD1;
+  --color-clay: #E5DACE;
+  --color-fog-blue: #8BA5B5;
+  --color-deep-blue: #1A2D4D;
+  --color-clay-orange: #C4724A;
+  --color-cream-yellow: #E8D898;
+  --color-ink-black: #1A1A18;
+}
+
+@layer base {
+  body {
+    @apply bg-cream text-charcoal font-sans antialiased;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  }
+}
+
+.market-card-shadow {
+  box-shadow: 0 2px 16px -2px rgba(180, 155, 120, 0.18), 0 1px 4px rgba(0,0,0,0.04);
+}
+
+.card-vintage {
+  background: #FDFBF7;
+  border: 1.5px solid rgba(229, 218, 206, 0.9);
+  box-shadow: 0 2px 14px -2px rgba(180, 155, 120, 0.16), inset 0 1px 0 rgba(255,255,255,0.6);
+}
+
+.stamp-badge {
+  display: inline-flex;
+  align-items: center;
+  border-width: 1.5px;
+  border-style: solid;
+  letter-spacing: 0.06em;
+  font-weight: 800;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #EAE3D9;
+  border-radius: 10px;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
