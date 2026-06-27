@@ -72,6 +72,8 @@ export const MOCK_STORIES: Story[] = [
   // ─── 失恋 ──────────────────────────────────────────────────────────
   {
     id: '201',
+    ownerId: 'demo-author-moon',
+    storyStatus: 'voting',
     title: '分手三个月后，他发来了"在吗"',
     category: '失恋',
     moodTags: ['前任', '边界', '深夜消息'],
@@ -79,6 +81,14 @@ export const MOCK_STORIES: Story[] = [
     userChoice: '我更想回复"有什么事"，先把距离摆出来',
     crowdChoice: '不回，把这条消息也删掉',
     status: '投票中',
+    bounty: {
+      amount: 50,
+      status: 'open',
+      settledAt: null,
+      responses: [],
+      winners: [],
+      allocations: [],
+    },
     healingAvailable: true,
     tags: ['失恋'],
     coverUrl: '/assets/covers/heartbreak-message.svg',
@@ -261,6 +271,8 @@ export const MOCK_STORIES: Story[] = [
   // ─── 现言 ──────────────────────────────────────────────────────────
   {
     id: '501',
+    ownerId: 'viewer-local-demo',
+    storyStatus: 'voting',
     title: '第一次提结婚，他沉默了三秒',
     category: '现言',
     moodTags: ['长期关系', '未来感', '那三秒'],
@@ -268,6 +280,39 @@ export const MOCK_STORIES: Story[] = [
     userChoice: '我更想先问他在害怕什么',
     crowdChoice: '暂时不谈，观察之后的行动',
     status: '投票中',
+    bounty: {
+      amount: 100,
+      status: 'open',
+      settledAt: null,
+      winners: [],
+      allocations: [],
+      responses: [
+        {
+          voterId: 'demo-voter-01',
+          nickname: '晚风来信',
+          optionId: 'e2',
+          reason: '先问他害怕什么，比直接追问结婚更容易听见真实顾虑，也能确认他是否愿意认真面对未来。',
+          createdAt: '2026-06-24T09:30:00.000Z',
+          isEligibleForReward: true,
+        },
+        {
+          voterId: 'demo-voter-02',
+          nickname: '松针与月亮',
+          optionId: 'e3',
+          reason: '可以给他两三天整理想法，但要约定下一次谈话的时间，避免问题再次被沉默带过去。',
+          createdAt: '2026-06-24T10:15:00.000Z',
+          isEligibleForReward: true,
+        },
+        {
+          voterId: 'demo-voter-03',
+          nickname: '北岸档案员',
+          optionId: 'e1',
+          reason: '重点不是马上得到结婚答案，而是确认你们是否拥有讨论未来的能力。可以直接但不指责地表达需求。',
+          createdAt: '2026-06-24T11:05:00.000Z',
+          isEligibleForReward: true,
+        },
+      ],
+    },
     healingAvailable: true,
     tags: ['现言'],
     coverUrl: '/assets/covers/apartment-night.svg',
