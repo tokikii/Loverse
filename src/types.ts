@@ -1,4 +1,4 @@
-export type View = 'home' | 'detail' | 'camp' | 'result' | 'create' | 'camps' | 'profile';
+export type View = 'home' | 'detail' | 'camp' | 'result' | 'create' | 'camps' | 'profile' | 'coach';
 
 export type StoryStatus = '投票中' | '已完结';
 
@@ -13,6 +13,7 @@ export interface Option {
   label: string;
   percentage: number;
   votes: string;
+  voteCount?: number;
   previewText: string;
   campName: string;
 }
@@ -48,4 +49,32 @@ export interface Story {
   totalVotes: string;
   trend: string;
   hotness: number;
+}
+
+export type VoteMap = Record<string, string>;
+
+export interface PersistedLoverseData {
+  version: 1;
+  stories: Story[];
+  votes: VoteMap;
+}
+
+export interface CoachInsight {
+  profileTags: string[];
+  insights: Array<{ title: string; detail: string }>;
+  weekly: {
+    voteCount: number;
+    topPattern: string;
+    themes: string[];
+    summary: string;
+  };
+  advice: string[];
+}
+
+export interface StoryCoachReview {
+  originalChoice: string;
+  crowdChoice: string;
+  difference: string;
+  reflection: string;
+  advice: string[];
 }

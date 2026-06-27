@@ -1,40 +1,30 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
-  Search, Plus, User, ChevronRight, Clock, Users, TrendingUp,
+  Plus, User, ChevronRight, Clock, Users, TrendingUp,
   Share2, MessageSquare, Trophy, ArrowLeft, Zap, Sparkles,
   Flame, LayoutGrid, X, Send, ChevronDown, BookOpen, Heart,
   Star, Activity, Brain,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { View, Story } from './types';
+import type { View, Story, VoteMap } from './types';
 import { MOCK_STORIES, CATEGORIES, SECONDARY_CATEGORIES } from './data/mockData';
 import { CATEGORY_GRADIENTS, getFallbackCover } from './services/imageProvider';
-import { initStoryCover } from './services/coverService';
+import { loadLoverseData, saveLoverseData } from './storage';
+import { buildCoachInsight, buildStoryCoachReview } from './services/coachService';
 
 // ─── constants ───────────────────────────────────────────────────────
 const DEFAULT_GRADIENT = 'linear-gradient(145deg, #F5EFE7 0%, #EEDAD1 100%)';
-const SQUIRREL_AVATAR = 'https://cdn.midjourney.com/ca1a7534-8078-4ea5-99a6-fcd23e92a9de/0_3.png';
+const KOALA_LOGO = '/assets/loverse-koala.webp';
 
-// ─── SquirrelAvatar ──────────────────────────────────────────────────
-const SquirrelAvatar: React.FC<{ className?: string }> = ({ className }) => {
-  const [err, setErr] = useState(false);
-  return err ? (
-    <div
-      className={`flex items-center justify-center ${className ?? ''}`}
-      style={{ background: 'linear-gradient(135deg, #EDE0F5, #F5D0E8)' }}
-    >
-      <span className="font-display font-bold text-sm" style={{ color: '#b07090' }}>S</span>
-    </div>
-  ) : (
+const KoalaMark: React.FC<{ className?: string; decorative?: boolean }> = ({ className, decorative = false }) => (
+  <span className={`koala-mark ${className ?? ''}`}>
     <img
-      src={SQUIRREL_AVATAR}
-      alt="avatar"
-      className={`object-cover ${className ?? ''}`}
-      onError={() => setErr(true)}
-      referrerPolicy="no-referrer"
+      src={KOALA_LOGO}
+      alt={decorative ? '' : 'Loverse 考拉'}
+      className="h-full w-full object-cover"
     />
-  );
-};
+  </span>
+);
 
 const MOCK_AI_COACH = [
   {
@@ -114,9 +104,23 @@ function getGradient(category?: string): string {
 }
 
 function getStoriesForTab(tab: string, all: Story[]): Story[] {
-  if (tab === '推荐') return all.filter(s => (s.hotness ?? 0) >= 80 && !SECONDARY_CATEGORIES.includes(s.category ?? ''));
+  if (tab === '推荐') {
+    const customStories = all.filter(s => Number(s.id) > 1_000_000_000_000);
+    const recommended = all.filter(s => (s.hotness ?? 0) >= 80 && !SECONDARY_CATEGORIES.includes(s.category ?? ''));
+    return [...customStories, ...recommended.filter(s => !customStories.some(custom => custom.id === s.id))];
+  }
   if (tab === '其它宇宙') return all.filter(s => SECONDARY_CATEGORIES.includes(s.category ?? ''));
   return all.filter(s => s.category === tab);
+}
+
+function parseVoteCount(value: string): number {
+  const normalized = value.trim().toLowerCase();
+  const numeric = Number.parseFloat(normalized.replace(/[^0-9.]/g, '')) || 0;
+  return Math.round(normalized.includes('k') ? numeric * 1000 : numeric);
+}
+
+function formatVoteCount(value: number): string {
+  return value.toLocaleString('zh-CN');
 }
 
 function getMockAICoach(story: Story) {
@@ -143,10 +147,12 @@ const CoverCell: React.FC<{
     >
       {/* CSS fallback overlay — visible when no image is loaded */}
       {!showImg && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center select-none pointer-events-none gap-1">
+        <div className="cover-fallback absolute inset-0 flex flex-col items-center justify-center select-none pointer-events-none gap-1">
+          <span className="cover-orbit cover-orbit-one" />
+          <span className="cover-orbit cover-orbit-two" />
           <span
-            className="text-3xl leading-none"
-            style={{ color: fallback.accentColor, opacity: 0.28 }}
+            className="relative text-4xl leading-none"
+            style={{ color: fallback.accentColor, opacity: 0.42 }}
           >
             {fallback.symbol}
           </span>
@@ -174,25 +180,25 @@ const CoverCell: React.FC<{
 
 // ─── Header ─────────────────────────────────────────────────────────
 const Header = ({ onAction }: { onAction: (v: View) => void }) => (
-  <header className="fixed top-0 left-0 right-0 z-50 bg-cream/90 backdrop-blur-md px-4 py-3 flex items-center justify-between border-b border-sand">
+  <header className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] z-50 bg-cream/90 backdrop-blur-md px-4 py-2.5 flex items-center justify-between border-b border-sand">
     <div className="flex items-center gap-2 cursor-pointer" onClick={() => onAction('home')}>
-      <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #E8D0F5, #F5D0E8)' }}>
-        <Heart className="w-4 h-4" style={{ color: '#b07090' }} />
+      <KoalaMark className="h-9 w-9" />
+      <div>
+        <h1 className="font-display font-bold text-lg tracking-tight leading-none">Loverse</h1>
+        <p className="text-[7px] uppercase tracking-[0.2em] text-charcoal/35 mt-1">Relationship Archive</p>
       </div>
-      <h1 className="font-display font-bold text-lg tracking-tight">Loverse</h1>
     </div>
     <div className="flex items-center gap-2">
-      <button className="w-9 h-9 rounded-full bg-sand/60 flex items-center justify-center hover:bg-sand transition-colors">
-        <Search className="w-4 h-4 text-charcoal/60" />
-      </button>
       <button
         onClick={() => onAction('create')}
-        className="w-9 h-9 rounded-full bg-charcoal flex items-center justify-center hover:bg-charcoal/80 transition-colors"
+        aria-label="发布故事"
+        className="h-9 px-3 rounded-full bg-charcoal flex items-center gap-1.5 justify-center hover:bg-charcoal/80 transition-colors text-cream text-xs font-semibold"
       >
-        <Plus className="w-4 h-4 text-cream" />
+        <Plus className="w-4 h-4" /> 发布
       </button>
       <button
         onClick={() => onAction('profile')}
+        aria-label="个人主页"
         className="w-9 h-9 rounded-full bg-sand/60 flex items-center justify-center"
       >
         <User className="w-4 h-4 text-charcoal/60" />
@@ -202,7 +208,7 @@ const Header = ({ onAction }: { onAction: (v: View) => void }) => (
 );
 
 // ─── StoryCard ───────────────────────────────────────────────────────
-const StoryCard = ({ story, onClick }: { story: Story; onClick: () => void }) => {
+const StoryCard = ({ story, onClick }: { story: Story; onClick: () => void; key?: React.Key }) => {
   const topOptions = story.options.slice(0, 3);
   const isSecondary = SECONDARY_CATEGORIES.includes(story.category ?? '');
   const numId = parseInt(story.id) || story.id.charCodeAt(0);
@@ -319,9 +325,9 @@ const HomeView = ({ stories, onSelectStory }: { stories: Story[]; onSelectStory:
       <section className="mb-5 px-1 pt-3">
         <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-charcoal/30 mb-2">Loverse · 关系档案馆</p>
         <h2 className="font-display font-bold text-3xl tracking-tight leading-tight mb-2">
-          把你的故事
+          和<span style={{ color: '#a97899' }}>考拉</span>一起，
           <br />
-          <span className="italic" style={{ color: '#b07090' }}>交给别人</span>
+          <span className="italic" style={{ color: '#a97899' }}>听故事</span>
         </h2>
         <p className="text-charcoal/50 text-xs leading-relaxed">
           上传你在一段关系里的迟疑，让他人投票。投票结束后，你会看见自己的答案、大多数别人的答案，以及故事共同走向的结局。
@@ -381,17 +387,58 @@ const HomeView = ({ stories, onSelectStory }: { stories: Story[]; onSelectStory:
   );
 };
 
+const StoryCoachCard = ({ story }: { story: Story }) => {
+  const review = buildStoryCoachReview(story);
+  return (
+    <div className="coach-card rounded-2xl border border-[#d8c6d4] p-4 mb-4 relative overflow-hidden">
+      <div className="relative">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-8 h-8 rounded-full bg-white/65 border border-white flex items-center justify-center">
+            <Brain className="w-4 h-4 text-[#8c6884]" />
+          </span>
+          <div>
+            <p className="font-display font-bold text-sm">这份故事的 Coach 复盘</p>
+            <p className="text-[9px] uppercase tracking-[0.16em] text-charcoal/35">Your relationship archive</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="bg-white/55 rounded-xl border border-white/70 p-3">
+            <p className="text-[9px] text-charcoal/35 font-bold mb-1">你的原始倾向</p>
+            <p className="text-xs leading-relaxed text-charcoal/70">{review.originalChoice}</p>
+          </div>
+          <div className="bg-white/55 rounded-xl border border-white/70 p-3">
+            <p className="text-[9px] text-charcoal/35 font-bold mb-1">当前多数选择</p>
+            <p className="text-xs leading-relaxed text-charcoal/70">{review.crowdChoice}</p>
+          </div>
+        </div>
+        <p className="text-[10px] font-semibold text-[#765b70] mb-2">{review.difference}</p>
+        <p className="text-xs text-charcoal/65 leading-relaxed mb-3">{review.reflection}</p>
+        <div className="space-y-1.5">
+          {review.advice.map((item, index) => (
+            <div key={item} className="flex gap-2 text-[11px] text-charcoal/60">
+              <span className="text-[#a57996] font-bold">0{index + 1}</span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── DetailView ──────────────────────────────────────────────────────
 const DetailView = ({
-  story, onBack, onJoinCamp,
+  story, votedId, onBack, onJoinCamp, onVote,
 }: {
   story: Story;
+  votedId: string | null;
   onBack: () => void;
   onJoinCamp: (camp: string, story: Story) => void;
+  onVote: (storyId: string, optionId: string) => void;
 }) => {
-  const [votedId, setVotedId] = useState<string | null>(null);
   const [chaptersExpanded, setChaptersExpanded] = useState(true);
   const isSecondary = SECONDARY_CATEGORIES.includes(story.category ?? '');
+  const isOwnStory = Number(story.id) > 1_000_000_000_000;
 
   const hasVoted = votedId !== null;
   const votedOption = story.options.find(o => o.id === votedId);
@@ -525,10 +572,11 @@ const DetailView = ({
               return (
               <div key={opt.id}>
                 <button
-                  onClick={() => setVotedId(opt.id)}
+                  onClick={() => onVote(story.id, opt.id)}
+                  disabled={hasVoted}
                   className={`w-full relative overflow-hidden rounded-2xl border-2 transition-all duration-200 ${
                     votedId === opt.id ? 'border-charcoal/30 bg-charcoal/5' : 'border-sand bg-white hover:border-charcoal/20'
-                  }`}
+                  } disabled:cursor-default`}
                 >
                   {/* Left color strip */}
                   <div className="absolute left-0 inset-y-0 w-[3px]" style={{ background: stripColor, opacity: votedId === opt.id ? 0.7 : 0.35 }} />
@@ -542,7 +590,7 @@ const DetailView = ({
                   <div className="relative pl-5 pr-4 py-3 flex items-center justify-between">
                     <div className="text-left flex-1 mr-3">
                       <div className="font-semibold text-sm text-charcoal/90">{opt.label}</div>
-                      <div className="text-[10px] text-charcoal/40 mt-0.5">{opt.votes} votes · {opt.campName}</div>
+                      <div className="text-[10px] text-charcoal/40 mt-0.5">{opt.votes} 票 · {opt.campName}</div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="font-bold text-sm text-charcoal/60">{opt.percentage}%</span>
@@ -616,7 +664,7 @@ const DetailView = ({
                   : <span className="text-[10px] bg-rose-50 text-rose-600 border border-rose-100 px-2.5 py-1 rounded-full font-bold">与多数不同</span>
                 }
               </div>
-              <AICoachPanel story={story} />
+              {isOwnStory ? <StoryCoachCard story={story} /> : <AICoachPanel story={story} />}
             </motion.div>
           )}
         </AnimatePresence>
@@ -696,7 +744,7 @@ const CampView = ({
             {['shushu02', 'shushu03', 'shushu04'].map((u, i) => (
               <div key={u} className="flex items-center gap-3 p-3.5">
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${i === 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-sand text-charcoal/40'}`}>{i + 1}</div>
-                <SquirrelAvatar className="w-8 h-8 rounded-full flex-shrink-0 border border-sand" />
+                <KoalaMark className="w-8 h-8" decorative />
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-sm">{u}</div>
                   <div className="text-[10px] text-charcoal/40">参与贡献: {(3 - i) * 4120 + 800}</div>
@@ -715,7 +763,7 @@ const CampView = ({
             <div className="p-4 space-y-3 max-h-52 overflow-y-auto">
               {messages.map((m, i) => (
                 <div key={i} className={`flex gap-2 ${m.user === 'You' ? 'flex-row-reverse' : ''}`}>
-                  {m.user !== 'You' ? <SquirrelAvatar className="w-7 h-7 rounded-full flex-shrink-0" /> : <div className="w-7 h-7 rounded-full bg-charcoal/20 flex-shrink-0" />}
+                  {m.user !== 'You' ? <KoalaMark className="w-7 h-7" decorative /> : <div className="w-7 h-7 rounded-full bg-charcoal/20 flex-shrink-0" />}
                   <div className="max-w-[75%]">
                     <div className={`text-[10px] text-charcoal/40 mb-0.5 font-medium ${m.user === 'You' ? 'text-right' : ''}`}>{m.user}</div>
                     <div className={`text-xs px-3 py-2 rounded-xl leading-relaxed ${m.user === 'You' ? 'bg-charcoal text-cream' : 'bg-sand/40 text-charcoal/80'}`}>
@@ -947,207 +995,185 @@ const ResultView = ({ story, onBack, onNextRound }: { story: Story; onBack: () =
 
 // ─── CreateView ──────────────────────────────────────────────────────
 const CreateView = ({ onBack, onPublish }: { onBack: () => void; onPublish: (story: Story) => void }) => {
-  const [title, setTitle]         = useState('');
-  const [dilemma, setDilemma]     = useState('');
+  const [title, setTitle] = useState('');
+  const [dilemma, setDilemma] = useState('');
   const [userChoice, setUserChoice] = useState('');
-  const [category, setCategory]   = useState('青春');
-  const [duration, setDuration]   = useState('24h');
-  const [options, setOptions]     = useState(['', '', '']);
+  const [category, setCategory] = useState('青春');
+  const [tagInput, setTagInput] = useState('');
+  const [duration, setDuration] = useState('24h');
+  const [options, setOptions] = useState(['', '', '']);
   const [published, setPublished] = useState(false);
-  const [coverMode, setCoverMode] = useState<'css' | 'url'>('css');
-  const [coverUrlInput, setCoverUrlInput] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const updateOption = (i: number, v: string) => setOptions(options.map((o, idx) => idx === i ? v : o));
+  const clearError = (key: string) => setErrors(prev => ({ ...prev, [key]: '' }));
+  const updateOption = (index: number, value: string) => {
+    setOptions(prev => prev.map((option, current) => current === index ? value : option));
+    clearError('options');
+  };
 
   const handlePublish = () => {
-    const valid = options.filter(o => o.trim());
-    if (!title.trim() || valid.length < 2) return;
-    const pctBase = Math.floor(100 / valid.length);
-    const resolvedCoverUrl = coverMode === 'url' && coverUrlInput.trim() ? coverUrlInput.trim() : undefined;
-    const newStory: Story = {
+    const validOptions = options.map(option => option.trim()).filter(Boolean);
+    const nextErrors: Record<string, string> = {};
+    if (!title.trim()) nextErrors.title = '请先给故事起一个名字。';
+    if (!dilemma.trim()) nextErrors.dilemma = '请写下故事背景或你正在困惑的事。';
+    if (validOptions.length < 2) nextErrors.options = '请至少填写两个可以投票的下一步。';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const moodTags = tagInput
+      .split(/[,，\s]+/)
+      .map(tag => tag.trim().replace(/^#/, ''))
+      .filter(Boolean)
+      .slice(0, 4);
+
+    onPublish({
       id: Date.now().toString(),
-      title,
+      title: title.trim(),
       category,
-      moodTags: [],
-      dilemma,
-      userChoice,
-      crowdChoice: valid[0] ?? '',
-      opening: dilemma,
+      moodTags,
+      dilemma: dilemma.trim(),
+      userChoice: userChoice.trim() || '发布者暂未公开',
+      crowdChoice: '投票进行中',
+      opening: dilemma.trim(),
       status: '投票中',
       healingAvailable: true,
       tags: [category],
-      currentNode: dilemma || '你会怎么选？',
-      description: dilemma,
-      chapters: [{ title: '故事开端', content: dilemma || '正在展开…', phase: 'previous' }],
+      currentNode: '如果是你，接下来会怎么做？',
+      description: dilemma.trim(),
+      chapters: [{ title: '故事开端', content: dilemma.trim(), phase: 'previous' }],
       endTime: duration,
       totalVotes: '0',
       trend: '+0%',
-      hotness: 0,
-      coverUrl: resolvedCoverUrl,
-      coverSource: resolvedCoverUrl ? 'upload' : 'css',
-      options: valid.map((label, i) => ({
-        id: `new_${i}`,
+      hotness: 100,
+      coverSource: 'css',
+      coverStatus: 'ready',
+      options: validOptions.map((label, index) => ({
+        id: `new_${index}`,
         label,
-        percentage: i === 0 ? 100 - pctBase * (valid.length - 1) : pctBase,
+        percentage: 0,
         votes: '0',
-        previewText: '走向待揭晓…',
-        campName: `方向 ${String.fromCharCode(65 + i)}`,
+        voteCount: 0,
+        previewText: '故事会沿着这个选择继续展开。',
+        campName: `方向 ${String.fromCharCode(65 + index)}`,
       })),
-    };
-    onPublish(newStory);
+    });
     setPublished(true);
   };
 
   if (published) {
     return (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pt-0 pb-28 bg-cream min-h-screen flex flex-col items-center justify-center px-8 text-center">
-        <div className="w-16 h-16 rounded-full flex items-center justify-center mb-5" style={{ background: 'linear-gradient(135deg, #E8D0F5, #F5D0E8)' }}>
-          <Heart className="w-8 h-8" style={{ color: '#b07090' }} />
-        </div>
-        <h2 className="font-display font-bold text-2xl mb-3">已放入 Loverse</h2>
-        <p className="text-charcoal/60 text-sm leading-relaxed mb-8">
-          你的故事岔路已被放入 Loverse，等待他人投票。<br />投票结束后，你会看见自己的选择和群体的答案。
-        </p>
-        <button onClick={onBack} className="bg-charcoal text-cream px-8 py-3.5 rounded-2xl font-bold text-sm">
-          返回首页
-        </button>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen pb-28 px-8 flex flex-col items-center justify-center text-center">
+        <KoalaMark className="h-20 w-20 mb-5" />
+        <h2 className="font-display font-bold text-2xl mb-3">故事已归档</h2>
+        <p className="text-charcoal/55 text-sm leading-relaxed mb-8">它已经出现在故事市集顶部，并会保存在当前设备中。</p>
+        <button onClick={onBack} className="bg-charcoal text-cream px-8 py-3.5 rounded-2xl font-bold text-sm">去看看</button>
       </motion.div>
     );
   }
 
+  const fieldClass = (error?: string) =>
+    `w-full bg-white rounded-xl p-3.5 border focus:ring-2 focus:ring-charcoal/20 outline-none text-sm ${error ? 'border-rose-300' : 'border-sand'}`;
+
   return (
-    <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} className="pt-0 pb-28 bg-cream min-h-screen">
-      <div className="flex items-center gap-3 px-4 pt-16 pb-5 border-b border-sand bg-cream">
-        <button onClick={onBack} className="w-9 h-9 rounded-full border border-sand bg-white flex items-center justify-center">
+    <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} className="pb-28 bg-cream min-h-screen">
+      <div className="flex items-center gap-3 px-4 pt-16 pb-5 border-b border-sand">
+        <button onClick={onBack} aria-label="返回" className="w-9 h-9 rounded-full border border-sand bg-white flex items-center justify-center">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <h2 className="font-display font-bold text-lg">上传你的关系岔路</h2>
-          <p className="text-[10px] text-charcoal/40 mt-0.5">让他人帮你投票，看见你的选择和群体的差异</p>
+          <h2 className="font-display font-bold text-lg">发布故事</h2>
+          <p className="text-[10px] text-charcoal/40 mt-0.5">把一段迟疑，放进关系档案馆</p>
         </div>
       </div>
 
       <div className="px-4 pt-5 space-y-5">
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">给这段关系困惑起个名字</label>
-          <input value={title} onChange={e => setTitle(e.target.value)}
-            placeholder="用一句话描述这个故事，让人想点进来…"
-            className="w-full bg-white rounded-xl p-3.5 border border-sand focus:ring-2 focus:ring-charcoal/20 outline-none text-sm" />
+          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">故事标题 *</label>
+          <input value={title} onChange={event => { setTitle(event.target.value); clearError('title'); }} placeholder="用一句话描述这个故事…" className={fieldClass(errors.title)} />
+          {errors.title && <p className="text-[11px] text-rose-500">{errors.title}</p>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">简单说说你正在犹豫什么</label>
-          <textarea value={dilemma} onChange={e => setDilemma(e.target.value)} rows={3}
-            placeholder="描述你的处境和迟疑，真实最重要…"
-            className="w-full bg-white rounded-xl p-3.5 border border-sand focus:ring-2 focus:ring-charcoal/20 outline-none text-sm resize-none" />
+          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">故事背景 / 困惑 *</label>
+          <textarea value={dilemma} onChange={event => { setDilemma(event.target.value); clearError('dilemma'); }} rows={5} placeholder="发生了什么？你正在犹豫什么？" className={`${fieldClass(errors.dilemma)} resize-none`} />
+          {errors.dilemma && <p className="text-[11px] text-rose-500">{errors.dilemma}</p>}
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">你原本更想选择什么</label>
-          <input value={userChoice} onChange={e => setUserChoice(e.target.value)}
-            placeholder="你心里倾向的方向是什么？"
-            className="w-full bg-white rounded-xl p-3.5 border border-sand focus:ring-2 focus:ring-charcoal/20 outline-none text-sm" />
+          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">你原本更倾向什么（可选）</label>
+          <input value={userChoice} onChange={event => setUserChoice(event.target.value)} placeholder="投票后，参与者会看到你的答案" className={fieldClass()} />
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">可选标签</label>
+          <input value={tagInput} onChange={event => setTagInput(event.target.value)} placeholder="异地、边界感、毕业季（逗号分隔）" className={fieldClass()} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">关系处境</label>
-            <div className="relative">
-              <select value={category} onChange={e => setCategory(e.target.value)}
-                className="w-full bg-white rounded-xl p-3.5 border border-sand outline-none text-sm appearance-none pr-8">
-                {['青春', '失恋', 'Crush', '职场', '现言', '古言', 'LGBTQ'].map(c => (
-                  <option key={c}>{c}</option>
-                ))}
+          <label className="space-y-1.5">
+            <span className="block text-[10px] font-bold uppercase tracking-widest text-charcoal/40">关系分类</span>
+            <span className="relative block">
+              <select value={category} onChange={event => setCategory(event.target.value)} className={`${fieldClass()} appearance-none pr-8`}>
+                {['青春', '失恋', 'Crush', '职场', '复合', '现言', '古言', 'LGBTQ'].map(item => <option key={item}>{item}</option>)}
               </select>
               <ChevronDown className="w-4 h-4 text-charcoal/30 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          </div>
+            </span>
+          </label>
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-charcoal/40">投票时长</label>
+            <span className="block text-[10px] font-bold uppercase tracking-widest text-charcoal/40">投票时长</span>
             <div className="grid grid-cols-2 gap-1.5">
-              {['1h','6h','12h','24h'].map(d => (
-                <button key={d} onClick={() => setDuration(d)}
-                  className={`py-3 rounded-xl text-xs font-bold transition-all ${duration === d ? 'bg-charcoal text-cream' : 'bg-white border border-sand text-charcoal/50'}`}>
-                  {d}
-                </button>
+              {['1h', '6h', '12h', '24h'].map(item => (
+                <button key={item} type="button" onClick={() => setDuration(item)} className={`py-3 rounded-xl text-xs font-bold ${duration === item ? 'bg-charcoal text-cream' : 'bg-white border border-sand text-charcoal/50'}`}>{item}</button>
               ))}
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-sand p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="font-display font-bold text-sm">你希望大家帮你投票的三个方向</h4>
-          </div>
-          {options.map((opt, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-lg bg-sand flex items-center justify-center text-[11px] font-bold text-charcoal/50 flex-shrink-0">
-                {String.fromCharCode(65 + i)}
-              </span>
-              <input value={opt} onChange={e => updateOption(i, e.target.value)}
-                placeholder={`方向 ${String.fromCharCode(65 + i)}…`}
-                className="flex-1 bg-sand/20 rounded-xl px-3 py-2.5 text-sm border border-sand outline-none focus:ring-1 focus:ring-charcoal/20" />
+        <div className={`bg-white rounded-2xl border p-4 space-y-3 ${errors.options ? 'border-rose-300' : 'border-sand'}`}>
+          <h4 className="font-display font-bold text-sm">可投票的下一步 *</h4>
+          {options.map((option, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-sand flex items-center justify-center text-[11px] font-bold text-charcoal/50">{String.fromCharCode(65 + index)}</span>
+              <input value={option} onChange={event => updateOption(index, event.target.value)} placeholder={`方向 ${String.fromCharCode(65 + index)}…`} className="flex-1 bg-sand/20 rounded-xl px-3 py-2.5 text-sm border border-sand outline-none" />
             </div>
           ))}
+          {errors.options && <p className="text-[11px] text-rose-500">{errors.options}</p>}
         </div>
 
-        {/* Cover source selector */}
-        <div className="bg-white rounded-2xl border border-sand p-4 space-y-3">
-          <h4 className="font-display font-bold text-sm">故事封面</h4>
-          <div className="flex gap-2">
-            {(['css', 'url'] as const).map(mode => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setCoverMode(mode)}
-                className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all border ${
-                  coverMode === mode
-                    ? 'bg-charcoal text-cream border-charcoal'
-                    : 'bg-white text-charcoal/50 border-sand hover:border-charcoal/20'
-                }`}
-              >
-                {mode === 'css' ? '系统卡牌封面' : '输入图片 URL'}
-              </button>
-            ))}
-          </div>
-          {coverMode === 'url' ? (
-            <input
-              value={coverUrlInput}
-              onChange={e => setCoverUrlInput(e.target.value)}
-              placeholder="https://… 图片直链"
-              className="w-full bg-sand/20 rounded-xl px-3 py-2.5 text-sm border border-sand outline-none focus:ring-1 focus:ring-charcoal/20"
-            />
-          ) : (
-            <p className="text-[10px] text-charcoal/35 leading-relaxed">
-              系统将根据故事分类自动生成卡牌风格封面。未来可接入 AI 图像生成。
-            </p>
-          )}
+        <div className="bg-white rounded-2xl border border-sand p-4">
+          <h4 className="font-display font-bold text-sm mb-1">故事封面</h4>
+          <p className="text-[10px] text-charcoal/35 leading-relaxed">将按分类生成本地 editorial 档案封面，不依赖外部图片服务。</p>
         </div>
 
-        <div className="flex items-start gap-2.5 px-1 py-2 text-[11px] text-charcoal/40 leading-relaxed">
-          <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>投票结束后，上传者可以看到自己的选择与群体选择的对比，以及 AI Coach 关系复盘。</span>
-        </div>
-
-        <button
-          onClick={handlePublish}
-          disabled={!title.trim() || options.filter(o => o.trim()).length < 2}
-          className="w-full bg-charcoal text-cream py-4 rounded-2xl font-display font-bold text-base shadow-lg shadow-charcoal/10 disabled:opacity-40"
-        >
-          放入 Loverse
-        </button>
+        <button onClick={handlePublish} className="w-full bg-charcoal text-cream py-4 rounded-2xl font-display font-bold text-base shadow-lg shadow-charcoal/10">发布故事</button>
       </div>
     </motion.div>
   );
 };
 
 // ─── CampsView ───────────────────────────────────────────────────────
-const CampsView = ({ onSelectStory, stories }: { onSelectStory: (s: Story) => void; stories: Story[] }) => {
-  const mockChoices = [
-    { storyId: '101', myChoice: '反问：你去哪里？', crowdChoice: '反问：你去哪里？', match: true, status: '投票中' as const },
-    { storyId: '501', myChoice: '给他几天，看他主动提不提', crowdChoice: '给他几天，看他主动提不提', match: true, status: '投票中' as const },
-    { storyId: '201', myChoice: '回复"在"，等他说下去', crowdChoice: '不回复', match: false, status: '投票中' as const },
-  ];
+const CampsView = ({
+  onSelectStory, onExplore, stories, votes,
+}: {
+  onSelectStory: (s: Story) => void;
+  onExplore: () => void;
+  stories: Story[];
+  votes: VoteMap;
+}) => {
+  const choices = Object.entries(votes).flatMap(([storyId, optionId]) => {
+    const story = stories.find(item => item.id === storyId);
+    const selectedOption = story?.options.find(option => option.id === optionId);
+    if (!story || !selectedOption) return [];
+    const crowdOption = [...story.options].sort((a, b) => b.percentage - a.percentage)[0];
+    return [{
+      storyId,
+      myChoice: selectedOption.label,
+      crowdChoice: crowdOption?.label ?? '暂未形成多数',
+      match: selectedOption.id === crowdOption?.id,
+      status: story.status ?? '投票中',
+    }];
+  });
+  const matchingCount = choices.filter(choice => choice.match).length;
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pt-20 pb-24 px-4 bg-cream min-h-screen">
@@ -1158,9 +1184,9 @@ const CampsView = ({ onSelectStory, stories }: { onSelectStory: (s: Story) => vo
 
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
-          { label: '参与故事', value: '3' },
-          { label: '与多数相同', value: '2' },
-          { label: '与多数不同', value: '1' },
+          { label: '参与故事', value: String(choices.length) },
+          { label: '与多数相同', value: String(matchingCount) },
+          { label: '与多数不同', value: String(choices.length - matchingCount) },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-xl p-3 border border-sand text-center">
             <div className="font-display font-bold text-xl">{s.value}</div>
@@ -1173,7 +1199,14 @@ const CampsView = ({ onSelectStory, stories }: { onSelectStory: (s: Story) => vo
         <Activity className="w-4 h-4 text-charcoal/60" /> 我的投票记录
       </h3>
       <div className="space-y-3 mb-6">
-        {mockChoices.map((choice, i) => {
+        {choices.length === 0 && (
+          <div className="bg-white rounded-2xl border border-dashed border-sand px-6 py-10 text-center">
+            <Users className="w-8 h-8 mx-auto mb-3 text-charcoal/20" />
+            <p className="text-sm font-semibold text-charcoal/55">还没有投票记录</p>
+            <p className="text-xs text-charcoal/35 mt-1">去故事市集选择一个故事的下一步。</p>
+          </div>
+        )}
+        {choices.map((choice, i) => {
           const story = stories.find(s => s.id === choice.storyId);
           if (!story) return null;
           return (
@@ -1216,15 +1249,28 @@ const CampsView = ({ onSelectStory, stories }: { onSelectStory: (s: Story) => vo
 
       <div className="bg-white rounded-2xl border border-sand p-5 text-center">
         <p className="text-xs text-charcoal/40 leading-relaxed">参与更多故事投票，<br />在这里看见你的选择和大多数人的距离</p>
-        <button className="mt-3 px-5 py-2 bg-charcoal text-cream text-xs font-bold rounded-xl">去首页探索</button>
+        <button onClick={onExplore} className="mt-3 px-5 py-2 bg-charcoal text-cream text-xs font-bold rounded-xl">去首页探索</button>
       </div>
     </motion.div>
   );
 };
 
 // ─── ProfileView ─────────────────────────────────────────────────────
-const ProfileView = ({ stories, onSelectStory }: { stories: Story[]; onSelectStory: (s: Story) => void }) => {
+const ProfileView = ({
+  stories, votes, onSelectStory, onOpenCoach,
+}: {
+  stories: Story[];
+  votes: VoteMap;
+  onSelectStory: (s: Story) => void;
+  onOpenCoach: () => void;
+}) => {
   const [activeTab, setActiveTab] = useState<'uploads' | 'portrait' | 'votes' | 'saved'>('uploads');
+  const uploadedStories = stories.filter(story => Number(story.id) > 1_000_000_000_000);
+  const votedStories = Object.entries(votes).flatMap(([storyId, optionId]) => {
+    const story = stories.find(item => item.id === storyId);
+    const option = story?.options.find(item => item.id === optionId);
+    return story && option ? [{ story, option }] : [];
+  });
   const savedPhrases = [
     '你值得一段不需要猜测的感情。',
     '不是每段感情都需要一个结论。',
@@ -1235,7 +1281,7 @@ const ProfileView = ({ stories, onSelectStory }: { stories: Story[]; onSelectSto
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pt-20 pb-24 px-4 bg-cream min-h-screen">
       {/* Avatar block */}
       <div className="bg-white rounded-2xl border border-sand p-5 mb-5 flex items-center gap-4">
-        <SquirrelAvatar className="w-16 h-16 rounded-full flex-shrink-0" />
+        <KoalaMark className="w-16 h-16 flex-shrink-0" />
         <div className="flex-1">
           <h2 className="font-display font-bold text-lg">shushu01</h2>
           <p className="text-xs text-charcoal/50 mt-0.5">在关系里总是等对方先开口的人</p>
@@ -1247,11 +1293,29 @@ const ProfileView = ({ stories, onSelectStory }: { stories: Story[]; onSelectSto
         </div>
       </div>
 
+      <button onClick={onOpenCoach} className="coach-entry w-full text-left rounded-2xl border border-[#d8c6d4] p-4 mb-5 relative overflow-hidden group">
+        <div className="relative flex items-center gap-3">
+          <div className="w-11 h-11 rounded-full bg-white/70 border border-white flex items-center justify-center flex-shrink-0">
+            <Brain className="w-5 h-5 text-[#8c6884]" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-display font-bold text-base">我的 AI Coach</p>
+            <p className="text-[11px] text-charcoal/50 mt-0.5">从每一次选择里，看见你的关系模式</p>
+            <div className="flex gap-1.5 mt-2 flex-wrap">
+              {buildCoachInsight(stories, votes).profileTags.slice(0, 3).map(tag => (
+                <span key={tag} className="text-[9px] px-2 py-0.5 rounded-full bg-white/55 border border-white/70 text-[#765b70]">{tag}</span>
+              ))}
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-charcoal/30 group-hover:translate-x-0.5 transition-transform" />
+        </div>
+      </button>
+
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2 mb-5">
         {[
-          { label: '上传', value: '2' },
-          { label: '投票', value: '14' },
+          { label: '上传', value: String(uploadedStories.length) },
+          { label: '投票', value: String(Object.keys(votes).length) },
           { label: '收藏', value: '6' },
           { label: '打卡', value: '12天' },
         ].map(s => (
@@ -1344,7 +1408,14 @@ const ProfileView = ({ stories, onSelectStory }: { stories: Story[]; onSelectSto
 
       {activeTab === 'uploads' && (
         <div className="space-y-3">
-          {stories.filter(s => ['101', '501'].includes(s.id)).map(story => (
+          {uploadedStories.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-sand bg-white px-6 py-10 text-center">
+              <BookOpen className="w-8 h-8 mx-auto mb-3 text-charcoal/20" />
+              <p className="text-sm font-semibold text-charcoal/55">还没有发布故事</p>
+              <p className="text-xs text-charcoal/35 mt-1">从底部“发布”开始建立你的第一份关系档案。</p>
+            </div>
+          )}
+          {uploadedStories.map(story => (
             <div
               key={story.id}
               onClick={() => onSelectStory(story)}
@@ -1382,36 +1453,178 @@ const ProfileView = ({ stories, onSelectStory }: { stories: Story[]; onSelectSto
 
       {activeTab === 'votes' && (
         <div className="space-y-3">
-          {[
-            { title: '分手三个月后，他发来了"在吗"', myChoice: '回复"在"，等他说下去', crowdChoice: '不回复', match: false },
-            { title: '暗恋了三年，他问我毕业后去哪里', myChoice: '反问：你去哪里？', crowdChoice: '反问：你去哪里？', match: true },
-          ].map((r, i) => (
-            <div key={i} className="bg-white rounded-xl border border-sand p-4">
-              <p className="font-semibold text-xs text-charcoal/80 mb-2">{r.title}</p>
+          {votedStories.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-sand bg-white px-6 py-10 text-center text-sm text-charcoal/40">
+              你的投票记录会出现在这里。
+            </div>
+          )}
+          {votedStories.map(({ story, option }) => {
+            const crowdOption = [...story.options].sort((a, b) => b.percentage - a.percentage)[0];
+            const matches = option.id === crowdOption?.id;
+            return (
+            <div key={story.id} onClick={() => onSelectStory(story)} className="bg-white rounded-xl border border-sand p-4 cursor-pointer">
+              <p className="font-semibold text-xs text-charcoal/80 mb-2">{story.title}</p>
               <div className="space-y-1 text-[10px]">
-                <div className="flex gap-1"><span className="text-charcoal/35 w-12 flex-shrink-0">我选择</span><span className="text-charcoal/65">{r.myChoice}</span></div>
-                <div className="flex gap-1"><span className="text-charcoal/35 w-12 flex-shrink-0">多数选</span><span className="text-charcoal/65">{r.crowdChoice}</span></div>
+                <div className="flex gap-1"><span className="text-charcoal/35 w-12 flex-shrink-0">我选择</span><span className="text-charcoal/65">{option.label}</span></div>
+                <div className="flex gap-1"><span className="text-charcoal/35 w-12 flex-shrink-0">多数选</span><span className="text-charcoal/65">{crowdOption?.label}</span></div>
               </div>
               <div className="mt-2">
-                {r.match
+                {matches
                   ? <span className="text-[9px] bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full font-bold">与多数一致</span>
                   : <span className="text-[9px] bg-rose-50 text-rose-600 border border-rose-100 px-2 py-0.5 rounded-full font-bold">与多数不同</span>
                 }
               </div>
             </div>
-          ))}
+          )})}
         </div>
       )}
     </motion.div>
   );
 };
 
+const CoachView = ({
+  stories, votes, onBack, onSelectStory,
+}: {
+  stories: Story[];
+  votes: VoteMap;
+  onBack: () => void;
+  onSelectStory: (story: Story) => void;
+}) => {
+  const insight = useMemo(() => buildCoachInsight(stories, votes), [stories, votes]);
+  const ownStories = stories.filter(story => Number(story.id) > 1_000_000_000_000);
+  const votedStories = Object.entries(votes).flatMap(([storyId, optionId]) => {
+    const story = stories.find(item => item.id === storyId);
+    const option = story?.options.find(item => item.id === optionId);
+    return story && option ? [{ story, option }] : [];
+  });
+
+  return (
+    <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} className="pt-20 pb-28 px-4 min-h-screen">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-xs font-semibold text-charcoal/50 mb-5">
+        <ArrowLeft className="w-4 h-4" /> 返回我的档案
+      </button>
+
+      <section className="coach-hero rounded-[24px] border border-[#d8c6d4] p-5 mb-5 relative overflow-hidden">
+        <div className="relative">
+          <div className="flex items-center gap-3 mb-4">
+            <KoalaMark className="w-14 h-14" />
+            <div>
+              <p className="text-[9px] uppercase tracking-[0.2em] text-charcoal/35 mb-1">Loverse relationship archive</p>
+              <h2 className="font-display font-bold text-2xl">我的 AI Coach</h2>
+              <p className="text-xs text-charcoal/50 mt-1">从每一次选择里，看见你的关系模式</p>
+            </div>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {insight.profileTags.map(tag => (
+              <span key={tag} className="text-[10px] px-2.5 py-1 rounded-full bg-white/55 border border-white/75 text-[#765b70] font-semibold">{tag}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white rounded-2xl border border-sand p-5 mb-4">
+        <div className="flex items-center gap-2 mb-4">
+          <Sparkles className="w-4 h-4 text-[#a57996]" />
+          <h3 className="font-display font-bold text-base">我的关系画像</h3>
+        </div>
+        <div className="space-y-4">
+          {insight.insights.map((item, index) => (
+            <div key={item.title} className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-[#eee3eb] text-[#8c6884] text-[10px] font-bold flex items-center justify-center flex-shrink-0">{index + 1}</span>
+              <div>
+                <p className="text-sm font-semibold text-charcoal/80">{item.title}</p>
+                <p className="text-xs text-charcoal/50 leading-relaxed mt-1">{item.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-[#d8d3c3] bg-[#f5f1e8] p-5 mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-display font-bold text-base">本周关系复盘</h3>
+          <span className="text-[9px] uppercase tracking-widest text-charcoal/30">Weekly note</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="bg-white/60 rounded-xl p-3">
+            <p className="text-xl font-display font-bold">{insight.weekly.voteCount}</p>
+            <p className="text-[10px] text-charcoal/40">最近参与选择</p>
+          </div>
+          <div className="bg-white/60 rounded-xl p-3">
+            <p className="text-sm font-display font-bold mt-1">{insight.weekly.topPattern}</p>
+            <p className="text-[10px] text-charcoal/40 mt-1">最常见的方向</p>
+          </div>
+        </div>
+        {insight.weekly.themes.length > 0 && (
+          <p className="text-[10px] text-charcoal/45 mb-2">最近主题：{insight.weekly.themes.join(' · ')}</p>
+        )}
+        <p className="text-xs text-charcoal/65 leading-relaxed">{insight.weekly.summary}</p>
+      </section>
+
+      <section className="bg-white rounded-2xl border border-sand p-5 mb-5">
+        <h3 className="font-display font-bold text-base mb-4">最近关系建议</h3>
+        <div className="space-y-2.5">
+          {insight.advice.map((item, index) => (
+            <div key={item} className="rounded-xl bg-sand/35 p-3 flex gap-3">
+              <span className="text-[10px] font-bold text-[#a57996]">0{index + 1}</span>
+              <p className="text-xs text-charcoal/65 leading-relaxed">{item}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-5">
+        <h3 className="font-display font-bold text-base mb-3">我发布过的故事</h3>
+        {ownStories.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-sand bg-white p-5 text-xs text-charcoal/40 text-center">发布故事后，专属复盘会在这里归档。</div>
+        ) : (
+          <div className="space-y-2">
+            {ownStories.map(story => (
+              <button key={story.id} onClick={() => onSelectStory(story)} className="w-full bg-white rounded-xl border border-sand p-3 flex items-center gap-3 text-left">
+                <CoverCell story={story} className="w-12 h-12 rounded-lg flex-shrink-0" />
+                <span className="flex-1 min-w-0 text-sm font-semibold truncate">{story.title}</span>
+                <ChevronRight className="w-4 h-4 text-charcoal/25" />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 className="font-display font-bold text-base mb-3">我参与投票过的故事</h3>
+        {votedStories.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-sand bg-white p-5 text-xs text-charcoal/40 text-center">完成一次投票后，你的选择会成为画像的一部分。</div>
+        ) : (
+          <div className="space-y-2">
+            {votedStories.map(({ story, option }) => (
+              <button key={story.id} onClick={() => onSelectStory(story)} className="w-full bg-white rounded-xl border border-sand p-3 flex items-center gap-3 text-left">
+                <CoverCell story={story} className="w-12 h-12 rounded-lg flex-shrink-0" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-semibold truncate">{story.title}</span>
+                  <span className="block text-[10px] text-charcoal/40 truncate mt-0.5">我选择：{option.label}</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-charcoal/25" />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </motion.div>
+  );
+};
+
 // ─── App ─────────────────────────────────────────────────────────────
 export default function App() {
+  const [initialData] = useState(loadLoverseData);
   const [currentView, setCurrentView]     = useState<View>('home');
-  const [selectedStory, setSelectedStory] = useState<Story>(MOCK_STORIES[0]);
+  const [selectedStory, setSelectedStory] = useState<Story>(initialData.stories[0] ?? MOCK_STORIES[0]);
   const [selectedCamp, setSelectedCamp]   = useState('真实营');
-  const [stories, setStories]             = useState<Story[]>(MOCK_STORIES);
+  const [stories, setStories]             = useState<Story[]>(initialData.stories);
+  const [votes, setVotes]                 = useState<VoteMap>(initialData.votes);
+
+  useEffect(() => {
+    saveLoverseData(stories, votes);
+  }, [stories, votes]);
 
   const handleSelectStory = (story: Story) => {
     setSelectedStory(story);
@@ -1424,14 +1637,38 @@ export default function App() {
   };
   const handlePublish = (story: Story) => {
     setStories(prev => [story, ...prev]);
-    setCurrentView('home');
+  };
+  const handleVote = (storyId: string, optionId: string) => {
+    if (votes[storyId]) return;
+
+    const nextStories = stories.map(story => {
+      if (story.id !== storyId) return story;
+
+      const counts = story.options.map(option => option.voteCount ?? parseVoteCount(option.votes));
+      const votedIndex = story.options.findIndex(option => option.id === optionId);
+      if (votedIndex < 0) return story;
+      counts[votedIndex] += 1;
+      const total = counts.reduce((sum, count) => sum + count, 0);
+      const options = story.options.map((option, index) => ({
+        ...option,
+        voteCount: counts[index],
+        votes: formatVoteCount(counts[index]),
+        percentage: total === 0 ? 0 : Number(((counts[index] / total) * 100).toFixed(1)),
+      }));
+      const crowdChoice = [...options].sort((a, b) => (b.voteCount ?? 0) - (a.voteCount ?? 0))[0]?.label ?? story.crowdChoice;
+      return { ...story, options, totalVotes: formatVoteCount(total), crowdChoice };
+    });
+
+    setVotes(prev => ({ ...prev, [storyId]: optionId }));
+    setStories(nextStories);
+    setSelectedStory(current => nextStories.find(story => story.id === current.id) ?? current);
   };
 
   const navItems: { view: View; icon: React.ReactNode; label: string }[] = [
-    { view: 'home',    icon: <LayoutGrid className="w-5 h-5" />, label: 'Market' },
-    { view: 'create',  icon: <Plus className="w-5 h-5" />,       label: 'Create' },
-    { view: 'camps',   icon: <Users className="w-5 h-5" />,      label: 'Camps' },
-    { view: 'profile', icon: <User className="w-5 h-5" />,       label: 'Profile' },
+    { view: 'home',    icon: <LayoutGrid className="w-5 h-5" />, label: '市集' },
+    { view: 'create',  icon: <Plus className="w-5 h-5" />,       label: '发布' },
+    { view: 'camps',   icon: <Users className="w-5 h-5" />,      label: '阵营' },
+    { view: 'profile', icon: <User className="w-5 h-5" />,       label: '我的' },
   ];
 
   return (
@@ -1447,7 +1684,13 @@ export default function App() {
           )}
           {currentView === 'detail' && (
             <motion.div key="detail" exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-              <DetailView story={selectedStory} onBack={() => setCurrentView('home')} onJoinCamp={handleJoinCamp} />
+              <DetailView
+                story={selectedStory}
+                votedId={votes[selectedStory.id] ?? null}
+                onBack={() => setCurrentView('home')}
+                onJoinCamp={handleJoinCamp}
+                onVote={handleVote}
+              />
             </motion.div>
           )}
           {currentView === 'camp' && (
@@ -1467,28 +1710,50 @@ export default function App() {
           )}
           {currentView === 'camps' && (
             <motion.div key="camps" exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-              <CampsView stories={stories} onSelectStory={handleSelectStory} />
+              <CampsView
+                stories={stories}
+                votes={votes}
+                onSelectStory={handleSelectStory}
+                onExplore={() => setCurrentView('home')}
+              />
             </motion.div>
           )}
           {currentView === 'profile' && (
             <motion.div key="profile" exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-              <ProfileView stories={stories} onSelectStory={handleSelectStory} />
+              <ProfileView
+                stories={stories}
+                votes={votes}
+                onSelectStory={handleSelectStory}
+                onOpenCoach={() => setCurrentView('coach')}
+              />
+            </motion.div>
+          )}
+          {currentView === 'coach' && (
+            <motion.div key="coach" exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+              <CoachView
+                stories={stories}
+                votes={votes}
+                onBack={() => setCurrentView('profile')}
+                onSelectStory={handleSelectStory}
+              />
             </motion.div>
           )}
         </AnimatePresence>
       </main>
 
       {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-white/90 backdrop-blur-md border-t border-sand px-6 py-2 flex justify-between items-center z-50">
+      <nav className="bottom-nav fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-white/90 backdrop-blur-md border-t border-sand px-6 pt-2 flex justify-between items-center z-50">
         {navItems.map(item => {
           const active = currentView === item.view ||
-            (item.view === 'home' && ['detail', 'camp', 'result'].includes(currentView));
+            (item.view === 'home' && ['detail', 'camp', 'result'].includes(currentView)) ||
+            (item.view === 'profile' && currentView === 'coach');
           return (
             <button
               key={item.view}
               onClick={() => setCurrentView(item.view)}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${active ? 'text-charcoal' : 'text-charcoal/30 hover:text-charcoal/50'}`}
+              className={`relative flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-colors ${active ? 'text-charcoal bg-sand/60' : 'text-charcoal/30 hover:text-charcoal/50'}`}
             >
+              {active && <span className="absolute -top-2 h-0.5 w-5 rounded-full bg-charcoal/70" />}
               {item.icon}
               <span className={`text-[9px] font-bold uppercase tracking-wide ${active ? 'opacity-100' : 'opacity-60'}`}>{item.label}</span>
             </button>
