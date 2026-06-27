@@ -3,14 +3,23 @@ import {
   Plus, User, ChevronRight, Clock, Users, TrendingUp,
   Share2, MessageSquare, Trophy, ArrowLeft, Zap, Sparkles,
   Flame, LayoutGrid, X, Send, ChevronDown, BookOpen, Heart,
-  Star, Activity, Brain,
+  Star, Activity, Brain, Gift, ShieldAlert, Award,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { View, Story, VoteMap } from './types';
+import type { BountyLedgerEntry, Story, View, VoteMap } from './types';
 import { MOCK_STORIES, CATEGORIES, SECONDARY_CATEGORIES } from './data/mockData';
 import { CATEGORY_GRADIENTS, getFallbackCover } from './services/imageProvider';
 import { loadLoverseData, saveLoverseData } from './storage';
 import { buildCoachInsight, buildStoryCoachReview } from './services/coachService';
+import {
+  SAFETY_MESSAGE,
+  bountyStatusLabel,
+  buildAllocations,
+  createEmptyBounty,
+  isEligibleReason,
+  isHighRiskStory,
+  upsertBountyResponse,
+} from './services/bountyService';
 
 // ─── constants ───────────────────────────────────────────────────────
 const DEFAULT_GRADIENT = 'linear-gradient(145deg, #F5EFE7 0%, #EEDAD1 100%)';
@@ -260,6 +269,19 @@ const StoryCard = ({ story, onClick }: { story: Story; onClick: () => void; key?
       </CoverCell>
 
       <div className="p-4">
+        {(story.bounty?.amount ?? 0) > 0 && !isHighRiskStory(story) && (
+          <div className="bounty-note flex items-center justify-between gap-2 rounded-xl border px-3 py-2 mb-3">
+            <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#765b55]">
+              <Gift className="w-3.5 h-3.5" /> 故事赏金 {story.bounty?.amount}
+            </span>
+            <span className="text-[9px] text-charcoal/45">
+              {story.bounty?.status === 'settled'
+                ? `已结算 ${story.bounty.amount} 故事赏金`
+                : story.storyStatus === 'ended' ? '赏金待结算' : '等待真诚回应'}
+            </span>
+          </div>
+        )}
+
         {/* Dilemma & Choice comparison — core Loverse feature */}
         {story.dilemma && !isSecondary && (
           <div className="mb-3 bg-sand/30 rounded-xl p-3 border border-sand/60">
@@ -428,17 +450,33 @@ const StoryCoachCard = ({ story }: { story: Story }) => {
 
 // ─── DetailView ──────────────────────────────────────────────────────
 const DetailView = ({
-  story, votedId, onBack, onJoinCamp, onVote,
+  story, votedId, viewerId, onBack, onJoinCamp, onVote, onSubmitResponse, onEndVoting, onSettleBounty,
 }: {
   story: Story;
   votedId: string | null;
+  viewerId: string;
   onBack: () => void;
   onJoinCamp: (camp: string, story: Story) => void;
   onVote: (storyId: string, optionId: string) => void;
+  onSubmitResponse: (storyId: string, reason: string) => void;
+  onEndVoting: (storyId: string) => void;
+  onSettleBounty: (storyId: string, winnerIds: string[]) => void;
 }) => {
   const [chaptersExpanded, setChaptersExpanded] = useState(true);
+  const ownResponse = story.bounty?.responses.find(response => response.voterId === viewerId);
+  const [responseReason, setResponseReason] = useState(ownResponse?.reason ?? '');
+  const [selectedWinnerIds, setSelectedWinnerIds] = useState<string[]>([]);
   const isSecondary = SECONDARY_CATEGORIES.includes(story.category ?? '');
-  const isOwnStory = Number(story.id) > 1_000_000_000_000;
+  const isOwnStory = story.ownerId === viewerId;
+  const hasBounty = (story.bounty?.amount ?? 0) > 0;
+  const highRisk = isHighRiskStory(story);
+  const eligibleResponses = story.bounty?.responses.filter(response => response.isEligibleForReward) ?? [];
+  const previewAllocations = buildAllocations(story.bounty?.amount ?? 0, selectedWinnerIds, eligibleResponses);
+
+  useEffect(() => {
+    setResponseReason(ownResponse?.reason ?? '');
+    setSelectedWinnerIds([]);
+  }, [story.id, ownResponse?.reason]);
 
   const hasVoted = votedId !== null;
   const votedOption = story.options.find(o => o.id === votedId);
@@ -489,6 +527,28 @@ const DetailView = ({
             <span className="font-bold">{story.trend}</span>
           </div>
         </div>
+
+        {hasBounty && !highRisk && (
+          <div className="bounty-note rounded-2xl border p-4 mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-full bg-white/65 flex items-center justify-center"><Gift className="w-4 h-4 text-[#8c6b62]" /></span>
+              <div>
+                <p className="text-[10px] text-charcoal/40">故事赏金</p>
+                <p className="font-display font-bold text-lg">{story.bounty?.amount}</p>
+              </div>
+            </div>
+            <span className="text-[10px] font-semibold text-[#765b55]">
+              {story.bounty?.status === 'settled' ? '赏金已结算' : story.storyStatus === 'ended' ? '赏金待结算' : '优质回应可获赏金'}
+            </span>
+          </div>
+        )}
+
+        {highRisk && (
+          <div className="rounded-2xl border border-[#d8c7bd] bg-[#f5eee8] p-4 mb-4 flex gap-3">
+            <ShieldAlert className="w-5 h-5 text-[#9a6c62] flex-shrink-0" />
+            <p className="text-xs text-charcoal/60 leading-relaxed">{SAFETY_MESSAGE}</p>
+          </div>
+        )}
 
         {/* Dilemma box — for relationship stories */}
         {!isSecondary && story.dilemma && (
@@ -573,7 +633,7 @@ const DetailView = ({
               <div key={opt.id}>
                 <button
                   onClick={() => onVote(story.id, opt.id)}
-                  disabled={hasVoted}
+                  disabled={story.storyStatus === 'ended' && story.bounty?.status !== 'settling'}
                   className={`w-full relative overflow-hidden rounded-2xl border-2 transition-all duration-200 ${
                     votedId === opt.id ? 'border-charcoal/30 bg-charcoal/5' : 'border-sand bg-white hover:border-charcoal/20'
                   } disabled:cursor-default`}
@@ -612,7 +672,7 @@ const DetailView = ({
                       <div className="bg-sand/20 border border-sand border-t-0 rounded-b-2xl px-4 pb-4 pt-3 space-y-2.5">
                         <p className="text-xs text-charcoal/60 leading-relaxed italic">走向预览：{opt.previewText}</p>
                         <div className="bg-white rounded-xl p-3 border border-sand/60 text-xs text-charcoal/60 leading-relaxed">
-                          ✓ 你已支持这个走向 · 投票结束后可查看群体选择与自己的对比
+                          ✓ 你已参与投票{story.storyStatus === 'voting' ? ' · 结束前仍可修改选择' : ''}
                         </div>
                         <button
                           onClick={() => onJoinCamp(opt.campName, story)}
@@ -629,6 +689,149 @@ const DetailView = ({
           })}
           </div>
         </div>
+
+        {hasBounty && !highRisk && hasVoted && !isOwnStory && story.bounty?.status !== 'settled' && (
+          <div className="bounty-note rounded-2xl border p-4 mb-4">
+            <div className="flex items-start gap-2.5 mb-3">
+              <Gift className="w-5 h-5 text-[#8c6b62] mt-0.5" />
+              <div>
+                <h3 className="font-display font-bold text-sm">想对故事主人说什么？</h3>
+                <p className="text-[11px] text-charcoal/45 leading-relaxed mt-1">写下你的判断理由，优质回应将有机会获得故事赏金。结算前可以修改。</p>
+              </div>
+            </div>
+            <textarea
+              value={responseReason}
+              onChange={event => setResponseReason(event.target.value)}
+              rows={4}
+              placeholder="写下你为什么做出这个选择，也许会成为对方看清关系的一句话。"
+              className="w-full bg-white/75 rounded-xl p-3 text-sm border border-[#ddcfc7] outline-none resize-none focus:ring-2 focus:ring-[#b895a8]/20"
+            />
+            <div className="flex items-center justify-between gap-3 mt-2">
+              <p className={`text-[10px] ${isEligibleReason(responseReason) ? 'text-emerald-700' : 'text-charcoal/35'}`}>
+                {isEligibleReason(responseReason) ? '已具备赏金候选资格' : '至少 10 个中文字符可进入候选池'}
+              </p>
+              <button
+                onClick={() => onSubmitResponse(story.id, responseReason)}
+                disabled={!responseReason.trim()}
+                className="px-4 py-2 rounded-xl bg-[#665259] text-white text-xs font-bold disabled:opacity-35"
+              >
+                {ownResponse ? '更新赏金回应' : '提交赏金回应'}
+              </button>
+            </div>
+            {ownResponse && (
+              <p className="text-[10px] text-[#765b55] mt-3">
+                {ownResponse.isEligibleForReward ? '你的赏金回应已提交' : '回应已保存，但暂未达到候选字数'}
+              </p>
+            )}
+          </div>
+        )}
+
+        {hasBounty && !highRisk && !isOwnStory && story.storyStatus === 'ended' && (
+          <div className="rounded-2xl border border-sand bg-white p-4 mb-4">
+            <p className="text-sm font-semibold">
+              {ownResponse ? '你的赏金回应已提交' : '你已参与投票'}
+            </p>
+            <p className="text-[11px] text-charcoal/45 mt-1">
+              {story.bounty?.status === 'settled'
+                ? story.bounty.allocations.find(item => item.voterId === viewerId)
+                  ? `获得 ${story.bounty.allocations.find(item => item.voterId === viewerId)?.amount} 故事赏金`
+                  : '赏金已结算，本次未获奖'
+                : '故事已结束，等待发布者结算赏金。'}
+            </p>
+          </div>
+        )}
+
+        {hasBounty && !highRisk && isOwnStory && (
+          <div className="bounty-note rounded-2xl border p-4 mb-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <p className="text-[10px] text-charcoal/40">发布者管理</p>
+                <h3 className="font-display font-bold text-base mt-0.5">{bountyStatusLabel(story)}</h3>
+              </div>
+              <span className="text-xs font-bold text-[#765b55]">赏金池 {story.bounty?.amount}</span>
+            </div>
+
+            {story.storyStatus === 'voting' && (
+              <button onClick={() => onEndVoting(story.id)} className="w-full py-3 rounded-xl bg-[#665259] text-white text-sm font-bold">
+                结束投票并结算
+              </button>
+            )}
+
+            {story.storyStatus === 'ended' && story.bounty?.status === 'settling' && eligibleResponses.length === 0 && (
+              <div className="rounded-xl bg-white/60 p-4 text-center">
+                <p className="text-sm font-semibold text-charcoal/60">暂无符合条件的赏金回应</p>
+                <p className="text-[10px] text-charcoal/35 mt-1">故事已结束，无需强制结算。</p>
+              </div>
+            )}
+
+            {story.storyStatus === 'ended' && story.bounty?.status === 'settling' && eligibleResponses.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs text-charcoal/55">选择最多 3 位赏金获得者</p>
+                  <span className="text-[10px] font-bold text-[#765b55]">已选择 {selectedWinnerIds.length}/3</span>
+                </div>
+                <div className="space-y-2.5">
+                  {eligibleResponses.map(response => {
+                    const selectedIndex = selectedWinnerIds.indexOf(response.voterId);
+                    const allocation = previewAllocations.find(item => item.voterId === response.voterId);
+                    const option = story.options.find(item => item.id === response.optionId);
+                    return (
+                      <button
+                        key={response.voterId}
+                        onClick={() => setSelectedWinnerIds(current => current.includes(response.voterId)
+                          ? current.filter(id => id !== response.voterId)
+                          : current.length < 3 ? [...current, response.voterId] : current)}
+                        className={`w-full text-left rounded-xl border p-3 transition-colors ${selectedIndex >= 0 ? 'border-[#927286] bg-white/85' : 'border-white/80 bg-white/50'}`}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="w-8 h-8 rounded-full bg-[#ded1d9] flex items-center justify-center text-xs font-bold text-[#765b70]">{response.nickname[0]}</span>
+                          <span className="flex-1 text-xs font-semibold">{response.nickname}</span>
+                          {selectedIndex >= 0 && <span className="text-[10px] font-bold text-[#765b55]">第 {selectedIndex + 1} 名 · {allocation?.amount ?? 0}</span>}
+                        </div>
+                        <p className="text-[10px] text-charcoal/40 mb-1">选择：{option?.label}</p>
+                        <p className="text-xs text-charcoal/65 leading-relaxed">{response.reason}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 rounded-xl bg-white/55 p-3">
+                  <p className="text-[10px] text-charcoal/40 mb-1">推荐分配</p>
+                  <p className="text-xs text-charcoal/65">
+                    {previewAllocations.length
+                      ? previewAllocations.map(item => `${item.nickname} ${item.amount}`).join(' · ')
+                      : '选择后显示推荐金额'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => onSettleBounty(story.id, selectedWinnerIds)}
+                  disabled={selectedWinnerIds.length === 0}
+                  className="w-full mt-3 py-3 rounded-xl bg-[#665259] text-white text-sm font-bold disabled:opacity-35"
+                >
+                  确认结算赏金
+                </button>
+              </div>
+            )}
+
+            {story.bounty?.status === 'settled' && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-emerald-700">赏金已结算</p>
+                {story.bounty.allocations.map(allocation => {
+                  const response = story.bounty?.responses.find(item => item.voterId === allocation.voterId);
+                  return (
+                    <div key={allocation.voterId} className="rounded-xl bg-white/60 p-3">
+                      <div className="flex items-center gap-2">
+                        <Award className="w-4 h-4 text-[#9a7861]" />
+                        <span className="flex-1 text-xs font-semibold">{allocation.nickname}</span>
+                        <span className="text-xs text-[#765b55]">获得 {allocation.amount} 故事赏金</span>
+                      </div>
+                      {response && <p className="text-[10px] text-charcoal/50 leading-relaxed mt-2">“{response.reason}”</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Post-vote: comparison + AI Coach — shown only after voting */}
         <AnimatePresence>
@@ -994,16 +1197,29 @@ const ResultView = ({ story, onBack, onNextRound }: { story: Story; onBack: () =
 };
 
 // ─── CreateView ──────────────────────────────────────────────────────
-const CreateView = ({ onBack, onPublish }: { onBack: () => void; onPublish: (story: Story) => void }) => {
+const CreateView = ({
+  viewerId, onBack, onPublish,
+}: {
+  viewerId: string;
+  onBack: () => void;
+  onPublish: (story: Story) => void;
+}) => {
   const [title, setTitle] = useState('');
   const [dilemma, setDilemma] = useState('');
   const [userChoice, setUserChoice] = useState('');
   const [category, setCategory] = useState('青春');
   const [tagInput, setTagInput] = useState('');
   const [duration, setDuration] = useState('24h');
+  const [bountyAmount, setBountyAmount] = useState(0);
   const [options, setOptions] = useState(['', '', '']);
   const [published, setPublished] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const hasHighRiskContent = isHighRiskStory({
+    title,
+    dilemma,
+    moodTags: tagInput.split(/[,，\s]+/),
+    options: options.map(label => ({ label })),
+  });
 
   const clearError = (key: string) => setErrors(prev => ({ ...prev, [key]: '' }));
   const updateOption = (index: number, value: string) => {
@@ -1028,6 +1244,8 @@ const CreateView = ({ onBack, onPublish }: { onBack: () => void; onPublish: (sto
 
     onPublish({
       id: Date.now().toString(),
+      ownerId: viewerId,
+      storyStatus: 'voting',
       title: title.trim(),
       category,
       moodTags,
@@ -1036,6 +1254,7 @@ const CreateView = ({ onBack, onPublish }: { onBack: () => void; onPublish: (sto
       crowdChoice: '投票进行中',
       opening: dilemma.trim(),
       status: '投票中',
+      bounty: createEmptyBounty(hasHighRiskContent ? 0 : bountyAmount),
       healingAvailable: true,
       tags: [category],
       currentNode: '如果是你，接下来会怎么做？',
@@ -1139,6 +1358,36 @@ const CreateView = ({ onBack, onPublish }: { onBack: () => void; onPublish: (sto
           ))}
           {errors.options && <p className="text-[11px] text-rose-500">{errors.options}</p>}
         </div>
+
+        {hasHighRiskContent ? (
+          <div className="rounded-2xl border border-[#d8c7bd] bg-[#f5eee8] p-4 flex gap-3">
+            <ShieldAlert className="w-5 h-5 text-[#9a6c62] flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-charcoal/60 leading-relaxed">{SAFETY_MESSAGE}</p>
+          </div>
+        ) : (
+          <div className="bounty-note rounded-2xl border p-4">
+            <div className="flex items-start gap-2.5 mb-3">
+              <Gift className="w-5 h-5 text-[#8c6b62] mt-0.5" />
+              <div>
+                <h4 className="font-display font-bold text-sm">设置故事赏金</h4>
+                <p className="text-[11px] text-charcoal/45 mt-1">为真正帮助你看清问题的回应设置一份赏金。</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {[0, 20, 50, 100].map(amount => (
+                <button
+                  key={amount}
+                  type="button"
+                  onClick={() => setBountyAmount(amount)}
+                  className={`py-2.5 rounded-xl text-xs font-bold border transition-colors ${bountyAmount === amount ? 'bg-[#665259] text-white border-[#665259]' : 'bg-white/70 text-charcoal/50 border-[#ded0c8]'}`}
+                >
+                  {amount}
+                </button>
+              ))}
+            </div>
+            {bountyAmount > 0 && <p className="text-xs font-semibold text-[#765b55] mt-3">本故事赏金池：{bountyAmount}</p>}
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl border border-sand p-4">
           <h4 className="font-display font-bold text-sm mb-1">故事封面</h4>
@@ -1255,17 +1504,109 @@ const CampsView = ({
   );
 };
 
-// ─── ProfileView ─────────────────────────────────────────────────────
-const ProfileView = ({
-  stories, votes, onSelectStory, onOpenCoach,
+const BountyProfileSection = ({
+  stories, votes, viewerId, bountyLedger, onSelectStory,
 }: {
   stories: Story[];
   votes: VoteMap;
+  viewerId: string;
+  bountyLedger: BountyLedgerEntry[];
+  onSelectStory: (story: Story) => void;
+}) => {
+  const responseStories = stories.flatMap(story => {
+    const response = story.bounty?.responses.find(item => item.voterId === viewerId);
+    return response && (story.bounty?.amount ?? 0) > 0 ? [{ story, response }] : [];
+  });
+  const publishedBounties = stories.filter(story => story.ownerId === viewerId && (story.bounty?.amount ?? 0) > 0);
+  const participatedBountyCount = stories.filter(story => (story.bounty?.amount ?? 0) > 0 && Boolean(votes[story.id])).length;
+  const totalReceived = bountyLedger.filter(entry => entry.type === 'received' && entry.viewerId === viewerId).reduce((sum, entry) => sum + entry.amount, 0);
+  const totalIssued = bountyLedger.filter(entry => entry.type === 'issued' && entry.viewerId === viewerId).reduce((sum, entry) => sum + entry.amount, 0);
+
+  return (
+    <section className="mb-5">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <Gift className="w-4 h-4 text-[#8c6b62]" />
+        <h3 className="font-display font-bold text-base">我的赏金记录</h3>
+      </div>
+      <div className="bounty-note rounded-2xl border p-4 mb-3">
+        <p className="text-[10px] uppercase tracking-widest text-charcoal/35 mb-3">我的故事赏金概览</p>
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { label: '累计获得', value: totalReceived },
+            { label: '累计发出', value: totalIssued },
+            { label: '参与有奖故事', value: participatedBountyCount },
+          ].map(item => (
+            <div key={item.label} className="rounded-xl bg-white/60 p-3 text-center">
+              <p className="font-display font-bold text-lg">{item.value}</p>
+              <p className="text-[9px] text-charcoal/40 mt-1">{item.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-sand p-4 mb-3">
+        <h4 className="text-xs font-bold mb-3">我的赏金回应</h4>
+        {responseStories.length === 0 ? (
+          <p className="text-[11px] text-charcoal/35 py-3 text-center">提交过的赏金回应会归档在这里。</p>
+        ) : (
+          <div className="space-y-2">
+            {responseStories.map(({ story, response }) => {
+              const allocation = story.bounty?.allocations.find(item => item.voterId === viewerId);
+              const option = story.options.find(item => item.id === response.optionId);
+              const status = story.bounty?.status !== 'settled' ? '待结算' : allocation ? `获得 ${allocation.amount} 故事赏金` : '未获奖';
+              return (
+                <button key={story.id} onClick={() => onSelectStory(story)} className="w-full rounded-xl bg-sand/25 p-3 text-left">
+                  <div className="flex items-center gap-2">
+                    <p className="flex-1 text-xs font-semibold truncate">{story.title}</p>
+                    <span className="text-[9px] font-bold text-[#765b55]">{status}</span>
+                  </div>
+                  <p className="text-[10px] text-charcoal/40 mt-1">我的选择：{option?.label}</p>
+                  <p className="text-[10px] text-charcoal/55 mt-1 truncate">“{response.reason}”</p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-sand p-4">
+        <h4 className="text-xs font-bold mb-3">我发布的故事赏金</h4>
+        {publishedBounties.length === 0 ? (
+          <p className="text-[11px] text-charcoal/35 py-3 text-center">发布带赏金的故事后会显示在这里。</p>
+        ) : (
+          <div className="space-y-2">
+            {publishedBounties.map(story => (
+              <button key={story.id} onClick={() => onSelectStory(story)} className="w-full rounded-xl bg-sand/25 p-3 text-left">
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 text-xs font-semibold truncate">{story.title}</p>
+                  <span className="text-[9px] font-bold text-[#765b55]">{bountyStatusLabel(story)}</span>
+                </div>
+                <p className="text-[10px] text-charcoal/45 mt-1">
+                  赏金池 {story.bounty?.amount}
+                  {story.bounty?.status === 'settled' && ` · ${story.bounty.winners.length} 位获得者 · 已发出 ${story.bounty.amount}`}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+
+// ─── ProfileView ─────────────────────────────────────────────────────
+const ProfileView = ({
+  stories, votes, viewerId, bountyLedger, onSelectStory, onOpenCoach,
+}: {
+  stories: Story[];
+  votes: VoteMap;
+  viewerId: string;
+  bountyLedger: BountyLedgerEntry[];
   onSelectStory: (s: Story) => void;
   onOpenCoach: () => void;
 }) => {
   const [activeTab, setActiveTab] = useState<'uploads' | 'portrait' | 'votes' | 'saved'>('uploads');
-  const uploadedStories = stories.filter(story => Number(story.id) > 1_000_000_000_000);
+  const uploadedStories = stories.filter(story => story.ownerId === viewerId);
   const votedStories = Object.entries(votes).flatMap(([storyId, optionId]) => {
     const story = stories.find(item => item.id === storyId);
     const option = story?.options.find(item => item.id === optionId);
@@ -1310,6 +1651,14 @@ const ProfileView = ({
           <ChevronRight className="w-4 h-4 text-charcoal/30 group-hover:translate-x-0.5 transition-transform" />
         </div>
       </button>
+
+      <BountyProfileSection
+        stories={stories}
+        votes={votes}
+        viewerId={viewerId}
+        bountyLedger={bountyLedger}
+        onSelectStory={onSelectStory}
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2 mb-5">
@@ -1483,15 +1832,16 @@ const ProfileView = ({
 };
 
 const CoachView = ({
-  stories, votes, onBack, onSelectStory,
+  stories, votes, viewerId, onBack, onSelectStory,
 }: {
   stories: Story[];
   votes: VoteMap;
+  viewerId: string;
   onBack: () => void;
   onSelectStory: (story: Story) => void;
 }) => {
   const insight = useMemo(() => buildCoachInsight(stories, votes), [stories, votes]);
-  const ownStories = stories.filter(story => Number(story.id) > 1_000_000_000_000);
+  const ownStories = stories.filter(story => story.ownerId === viewerId);
   const votedStories = Object.entries(votes).flatMap(([storyId, optionId]) => {
     const story = stories.find(item => item.id === storyId);
     const option = story?.options.find(item => item.id === optionId);
@@ -1616,15 +1966,17 @@ const CoachView = ({
 // ─── App ─────────────────────────────────────────────────────────────
 export default function App() {
   const [initialData] = useState(loadLoverseData);
+  const viewerId = initialData.viewerId;
   const [currentView, setCurrentView]     = useState<View>('home');
   const [selectedStory, setSelectedStory] = useState<Story>(initialData.stories[0] ?? MOCK_STORIES[0]);
   const [selectedCamp, setSelectedCamp]   = useState('真实营');
   const [stories, setStories]             = useState<Story[]>(initialData.stories);
   const [votes, setVotes]                 = useState<VoteMap>(initialData.votes);
+  const [bountyLedger, setBountyLedger]   = useState<BountyLedgerEntry[]>(initialData.bountyLedger);
 
   useEffect(() => {
-    saveLoverseData(stories, votes);
-  }, [stories, votes]);
+    saveLoverseData(stories, votes, viewerId, bountyLedger);
+  }, [stories, votes, viewerId, bountyLedger]);
 
   const handleSelectStory = (story: Story) => {
     setSelectedStory(story);
@@ -1639,14 +1991,18 @@ export default function App() {
     setStories(prev => [story, ...prev]);
   };
   const handleVote = (storyId: string, optionId: string) => {
-    if (votes[storyId]) return;
+    const previousOptionId = votes[storyId];
+    if (previousOptionId === optionId) return;
 
     const nextStories = stories.map(story => {
       if (story.id !== storyId) return story;
+      if (story.storyStatus === 'ended' && story.bounty?.status !== 'settling') return story;
 
       const counts = story.options.map(option => option.voteCount ?? parseVoteCount(option.votes));
+      const previousIndex = story.options.findIndex(option => option.id === previousOptionId);
       const votedIndex = story.options.findIndex(option => option.id === optionId);
       if (votedIndex < 0) return story;
+      if (previousIndex >= 0) counts[previousIndex] = Math.max(0, counts[previousIndex] - 1);
       counts[votedIndex] += 1;
       const total = counts.reduce((sum, count) => sum + count, 0);
       const options = story.options.map((option, index) => ({
@@ -1656,12 +2012,104 @@ export default function App() {
         percentage: total === 0 ? 0 : Number(((counts[index] / total) * 100).toFixed(1)),
       }));
       const crowdChoice = [...options].sort((a, b) => (b.voteCount ?? 0) - (a.voteCount ?? 0))[0]?.label ?? story.crowdChoice;
-      return { ...story, options, totalVotes: formatVoteCount(total), crowdChoice };
+      const bounty = story.bounty
+        ? {
+            ...story.bounty,
+            responses: story.bounty.responses.map(response => response.voterId === viewerId ? { ...response, optionId } : response),
+          }
+        : story.bounty;
+      return { ...story, options, totalVotes: formatVoteCount(total), crowdChoice, bounty };
     });
 
     setVotes(prev => ({ ...prev, [storyId]: optionId }));
     setStories(nextStories);
     setSelectedStory(current => nextStories.find(story => story.id === current.id) ?? current);
+  };
+
+  const handleSubmitResponse = (storyId: string, reason: string) => {
+    const optionId = votes[storyId];
+    if (!optionId) return;
+    const nextStories = stories.map(story => {
+      if (story.id !== storyId || !story.bounty || story.bounty.status === 'settled') return story;
+      const existing = story.bounty.responses.find(response => response.voterId === viewerId);
+      return {
+        ...story,
+        bounty: {
+          ...story.bounty,
+          responses: upsertBountyResponse(story.bounty.responses, {
+            voterId: viewerId,
+            nickname: '考拉旅人',
+            optionId,
+            reason: reason.trim(),
+            createdAt: existing?.createdAt ?? new Date().toISOString(),
+          }),
+        },
+      };
+    });
+    setStories(nextStories);
+    setSelectedStory(current => nextStories.find(story => story.id === current.id) ?? current);
+  };
+
+  const handleEndVoting = (storyId: string) => {
+    const nextStories = stories.map(story => {
+      if (story.id !== storyId || story.ownerId !== viewerId || !story.bounty || story.bounty.amount <= 0 || isHighRiskStory(story)) return story;
+      return {
+        ...story,
+        storyStatus: 'ended' as const,
+        status: '已完结' as const,
+        bounty: { ...story.bounty, status: story.bounty.status === 'settled' ? 'settled' as const : 'settling' as const },
+      };
+    });
+    setStories(nextStories);
+    setSelectedStory(current => nextStories.find(story => story.id === current.id) ?? current);
+  };
+
+  const handleSettleBounty = (storyId: string, winnerIds: string[]) => {
+    const story = stories.find(item => item.id === storyId);
+    if (
+      !story?.bounty
+      || story.ownerId !== viewerId
+      || story.bounty.status !== 'settling'
+      || winnerIds.length < 1
+      || winnerIds.length > 3
+      || isHighRiskStory(story)
+    ) return;
+
+    const eligibleResponses = story.bounty.responses.filter(response => response.isEligibleForReward);
+    if (!winnerIds.every(id => eligibleResponses.some(response => response.voterId === id))) return;
+    const allocations = buildAllocations(story.bounty.amount, winnerIds, eligibleResponses);
+    const settledAt = new Date().toISOString();
+    const nextStories = stories.map(item => item.id === storyId ? {
+      ...item,
+      bounty: {
+        ...item.bounty!,
+        status: 'settled' as const,
+        settledAt,
+        winners: winnerIds,
+        allocations,
+      },
+    } : item);
+    const ledgerEntries: BountyLedgerEntry[] = [
+      {
+        id: `${storyId}-issued-${settledAt}`,
+        storyId,
+        viewerId,
+        type: 'issued',
+        amount: story.bounty.amount,
+        createdAt: settledAt,
+      },
+      ...allocations.map(allocation => ({
+        id: `${storyId}-received-${allocation.voterId}-${settledAt}`,
+        storyId,
+        viewerId: allocation.voterId,
+        type: 'received' as const,
+        amount: allocation.amount,
+        createdAt: settledAt,
+      })),
+    ];
+    setBountyLedger(current => [...current, ...ledgerEntries]);
+    setStories(nextStories);
+    setSelectedStory(current => nextStories.find(item => item.id === current.id) ?? current);
   };
 
   const navItems: { view: View; icon: React.ReactNode; label: string }[] = [
@@ -1687,9 +2135,13 @@ export default function App() {
               <DetailView
                 story={selectedStory}
                 votedId={votes[selectedStory.id] ?? null}
+                viewerId={viewerId}
                 onBack={() => setCurrentView('home')}
                 onJoinCamp={handleJoinCamp}
                 onVote={handleVote}
+                onSubmitResponse={handleSubmitResponse}
+                onEndVoting={handleEndVoting}
+                onSettleBounty={handleSettleBounty}
               />
             </motion.div>
           )}
@@ -1705,7 +2157,7 @@ export default function App() {
           )}
           {currentView === 'create' && (
             <motion.div key="create" exit={{ x: '100%' }} transition={{ duration: 0.25 }}>
-              <CreateView onBack={() => setCurrentView('home')} onPublish={handlePublish} />
+              <CreateView viewerId={viewerId} onBack={() => setCurrentView('home')} onPublish={handlePublish} />
             </motion.div>
           )}
           {currentView === 'camps' && (
@@ -1723,6 +2175,8 @@ export default function App() {
               <ProfileView
                 stories={stories}
                 votes={votes}
+                viewerId={viewerId}
+                bountyLedger={bountyLedger}
                 onSelectStory={handleSelectStory}
                 onOpenCoach={() => setCurrentView('coach')}
               />
@@ -1733,6 +2187,7 @@ export default function App() {
               <CoachView
                 stories={stories}
                 votes={votes}
+                viewerId={viewerId}
                 onBack={() => setCurrentView('profile')}
                 onSelectStory={handleSelectStory}
               />
